@@ -1,0 +1,4 @@
+build/
+build_py/
+src/.vs/
+src_py/.vs/

@@ -1,0 +1,20 @@
+cmake_minimum_required(VERSION 3.4...3.18)
+project(cpp_simulation)
+
+#set environmental variables for pybind
+#set(Python_EXECUTABLE "C:/Users/sickl/anaconda3/python.exe")
+#set(Python_INCLUDE_DIR "C:/Users/sickl/anaconda3/include")
+#set(PYBIND11_PYTHON_VERSION 3.11)
+set(CMAKE_CONFIGURATION_TYPES Release)
+set(CMAKE_CXX_STANDARD 20) #set the cmake c++ version to C++20
+set(CMAKE_CXX_STANDARD_REQUIRED True)
+
+#find_package(Python 3.11 COMPONENTS Interpreter Development REQUIRED)
+#find_package(pybind11 CONFIG REQUIRED)
+
+add_library(mylibs STATIC customs.h helpers.hpp Xoshiro.hpp)
+set_target_properties(mylibs PROPERTIES LINKER_LANGUAGE Cxx)
+
+#pybind11_add_module(${PROJECT_NAME} SHARED c_sim.cpp)
+target_link_libraries(mylibs ${PROJECT_NAME})
+add_executable(${PROJECT_NAME} c_sim.cpp)
