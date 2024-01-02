@@ -56,11 +56,10 @@ void sim_setup(double area, double w, vec<double>& strs, vec<double>& systemstre
 //this function takes care of stuff between slips. Gradually loads all cells at rate defined in main simulation.
 // If time + deltat >= time_max, return true and break out of the while loop. Else return false
 //todo: implement adiabatic (rate = 0) properly.
-bool between_slips(int& time, double& time_max, double& rate, double& area, double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain);
+bool between_slips(int& time, double& time_max, double& rate, double& area, double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain, int is_forcerate);
 
 return_tuple c_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write);
-return_tuple cpp_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times);
-return_tuple cpp_sim_multiple_weakenings(double area, double time_max, std::vector<double> weakenings, double consv, double rate, double w, double a, double modulus, int to_write);
+return_tuple cpp_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times, int is_forcerate);
 
 double wbl(int ind, double** us, double* cs, int* i97s, int* j97s, double cm, double cd, double k, double lambda);
 double wbl(int ind, double** us, double* cs, int* i97s, int* j97s, double cm, double cd, double k, double lambda)
@@ -226,7 +225,8 @@ void sim_setup(double area, double w, vec<double>& strs, vec<double>& systemstre
 	return;
 }
 
-bool between_slips(int& time, double& time_max, double& rate, double& area, double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain)
+
+bool between_slips(int& time, double& time_max, double& rate, double& area, double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain, int is_forcerate)
 {
 	//re-iniitalize fail stress
 	for (int i = 0; i < area; i++)
@@ -239,14 +239,14 @@ bool between_slips(int& time, double& time_max, double& rate, double& area, doub
 			next_fail = fail_strs[i] - strs[i];//chose minimum stress to next failure
 	}
 	if (rate > 0.0) {
-		int deltat = static_cast<int> (next_fail / (rate * modulus));
+		int deltat = static_cast<int> (next_fail / (rate * (1-is_forcerate)*modulus)); //if forcerate, then modulus is not factored in.
 		if (deltat > 0) {
 			for (int i = 0; i < deltat; i++) {
 				if (time == time_max) {
 					return true; //flag raised that simulation is done
 				}
 				systemstress[time] = next_fail * area / (static_cast<double> (deltat)) + systemstress[time - 1];
-				strain[time] = strain[time - 1] + rate;
+				strain[time] = strain[time - 1] + is_forcerate*rate; //strain only increments during avalanche during a force rate controlled avalanche.
 				time++;
 			}
 		}
@@ -262,7 +262,7 @@ bool between_slips(int& time, double& time_max, double& rate, double& area, doub
 	return false;
 }
 
-bool during_slip(int& time, double& rate, double& area, double& a, double& b, double& consvarea, double& invconsv, double& weakening,double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain)
+bool during_slip(int& time, double& rate, double& area, double& a, double& b, double& consvarea, double& invconsv, double& weakening, double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain, double* failed_this_timestep)
 {
 	//default is false. That is, the avalanche will stop.
 	bool will_fail = false;
@@ -304,7 +304,8 @@ bool during_slip(int& time, double& rate, double& area, double& a, double& b, do
 }
 
 //For most cases, set modulus = 1e-3.
-return_tuple simcpp(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write)
+//when force rate controlled, set strain = 0 outside of an avalanche, then strain += 1/N^2 inside of an avalanche
+return_tuple cpp_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times, int is_forcerate)
 {
 	double b = 1 / tgamma(1 + 1 / a);
 	vec<double> strs(area, -1);
@@ -312,15 +313,29 @@ return_tuple simcpp(double area, double time_max, double weakening, double consv
 	vec<double> strain(time_max, 0);
 	vec<double> arr_strs(area, -1);
 	vec<double> fail_strs(area, -1);
+	vec<double> failed_this_timestep(area, 0); //'failed this timestep' will have 1 on all indices that have failed during the given timestep
 
-	//calculate once to save time
-	double consvarea = consv / area;
+	FILE* failure_file; //get the file to write failure time output to, in case the option is specified
+	std::ostringstream oss_failure_file;
+	oss_failure_file << "failure_time_output" << std::scientific << std::setprecision(2) << weakening << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
+	const char* failure_file_name = oss_failure_file.str().c_str(); //convert to str() then to c_str so we can fprintf to the file.
+
+	if (to_write_failure_times > 0)
+	{
+		fopen_s(&failure_file, failure_file_name, "w"); //open file to write
+	}
+
+	//calculate once to save time.
+	double consvarea = consv / (area - 1);
 	double invconsv = 1.0 / consv;
 
-	double next_fail;
-	int will_fail;
-	double fail_amount;
+	double next_fail = 100;
+	int will_fail = -1;
 	vec<double> randm(area, -1);
+
+	//if is_forcerate is greater than 1, set it to 1 for the calculations.
+	if (is_forcerate > 1)
+		is_forcerate = 1;
 
 	int time = 0;
 	int deltat = 0; //time to fail
@@ -336,7 +351,7 @@ return_tuple simcpp(double area, double time_max, double weakening, double consv
 	while (time < time_max)
 	{
 		//loads all cells by the minimum amount required to the next fail. Time iterates to be when the next slip happens.
-		simulation_done = between_slips(time, time_max, rate, area,modulus, strs.data(), arr_strs.data(), fail_strs.data(), systemstress.data(),strain.data());
+		simulation_done = between_slips(time, time_max, rate, area, modulus, strs.data(), arr_strs.data(), fail_strs.data(), systemstress.data(), strain.data(), is_forcerate);
 		//if the simulation is done, break the loop.
 		if (simulation_done)
 			break;
@@ -345,13 +360,24 @@ return_tuple simcpp(double area, double time_max, double weakening, double consv
 
 		while ((time < time_max) && will_fail)
 		{
-			//(int& time, double& rate, double& area, double& a, double& b, double& consvarea, double& invconsv, double& weakening,double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain)
-			will_fail = during_slip(time, rate, area, a, b, consvarea, invconsv, weakening, modulus, strs.data(), arr_strs.data(), fail_strs.data(), systemstress.data(),strain.data());
+			will_fail = during_slip(time, rate, area, a, b, consvarea, invconsv, weakening, modulus, strs.data(), arr_strs.data(), fail_strs.data(), systemstress.data(), strain.data(), failed_this_timestep.data());
+			//Write the cells that failed this time step to a file, if that option is given.
+			if (to_write_failure_times > 0)
+			{
+				for (int i = 0; i < area; i++)
+				{
+					if (failed_this_timestep[i] == 1)
+					{
+						fprintf(failure_file, "%d %d\n", time, i);
+					}
+				}
+
+			}
 			++time;
 		}
 	}
 
-	if (to_write > 0)
+	if (to_write_stress > 0)
 	{
 		std::ostringstream oss;
 		oss << "scms_avg_eps_" << std::scientific << std::setprecision(2) << weakening << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
@@ -359,64 +385,9 @@ return_tuple simcpp(double area, double time_max, double weakening, double consv
 		helpers::write_txt(name, systemstress);
 	}
 
-	return_tuple out = std::make_tuple(systemstress, strain, strs); //stress is vector of stresses at the end of the simulation. force is the total amount of stress in the system. strain is proportional to the amount of time
-	return out;
-}
-
-//force rate controlled. Set strain = 0 outside of an avalanche, then strain += 1/N^2 inside of an avalanche
-return_tuple simcpp_forcerate(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write)
-{
-	double b = 1 / tgamma(1 + 1 / a);
-	vec<double> strs(area, -1);
-	vec<double> systemstress(time_max, 0); //initialize all systemstress to be 0.
-	vec<double> strain(time_max, 0);
-	vec<double> arr_strs(area, -1);
-	vec<double> fail_strs(area, -1);
-
-	//calculate once to save time
-	double consvarea = consv / area;
-	double invconsv = 1.0 / consv;
-
-	double next_fail;
-	int will_fail;
-	double fail_amount;
-	vec<double> randm(area, -1);
-
-	int time = 0;
-	int deltat = 0; //time to fail
-	double x = -1; //holds amount of stress failed on the current cell
-
-	bool simulation_done = false; //simulation is not done until this flag is pinged.
-
-	//set up the simulation
-	sim_setup(area, w, strs, systemstress, arr_strs, fail_strs);
-	time = 1;
-
-	//main loop
-	while (time < time_max)
+	if (to_write_failure_times > 0)
 	{
-		//loads all cells by the minimum amount required to the next fail. Time iterates to be when the next slip happens.
-		simulation_done = between_slips_forcerate(time, time_max, rate, area, modulus, strs.data(), arr_strs.data(), fail_strs.data(), systemstress.data(), strain.data());
-		//if the simulation is done, break the loop.
-		if (simulation_done)
-			break;
-		//between_slips guarantees there will be a slip.
-		will_fail = 1;
-
-		while ((time < time_max) && will_fail)
-		{
-			//(int& time, double& rate, double& area, double& a, double& b, double& consvarea, double& invconsv, double& weakening,double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain)
-			will_fail = during_slip(time, rate, area, a, b, consvarea, invconsv, weakening, modulus, strs.data(), arr_strs.data(), fail_strs.data(), systemstress.data(), strain.data());
-			++time;
-		}
-	}
-
-	if (to_write > 0)
-	{
-		std::ostringstream oss;
-		oss << "scms_avg_eps_" << std::scientific << std::setprecision(2) << weakening << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
-		std::string name = oss.str();
-		helpers::write_txt(name, systemstress);
+		fclose(failure_file);
 	}
 
 	return_tuple out = std::make_tuple(systemstress, strain, strs); //stress is vector of stresses at the end of the simulation. force is the total amount of stress in the system. strain is proportional to the amount of time
@@ -606,7 +577,7 @@ return_tuple c_sim(double area, double time_max, double weakening, double consv,
 // Input here now also includes a list of weakenings. The weakenings will, by default, change at even intervals. 
 // That is, if there are 4 weakenings, there will be a change at 25%, 50%, and 75%.
 //
-return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vector<double> weakenings, double consv, double rate, double w, double a, double modulus, int to_write)
+return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vector<double> weakenings, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times, int is_forcerate)
 {
 
 	double b = 1 / tgamma(1 + 1 / a);
@@ -615,15 +586,20 @@ return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vecto
 	vec<double> strain(time_max, 0);
 	vec<double> arr_strs(area, -1);
 	vec<double> fail_strs(area, -1);
+	vec<double> failed_this_timestep(area, 0); //'failed this timestep' will have 1 on all indices that have failed during the given timestep
 
-	//calculate once to save time
-	double consvarea = consv / area;
+
+	//calculate once to save time.
+	double consvarea = consv / (area - 1);
 	double invconsv = 1.0 / consv;
 
 	double next_fail;
 	int will_fail;
-	double fail_amount;
 	vec<double> randm(area, -1);
+
+	//if is_forcerate is greater than 1, set it to 1 for the calculations.
+	if (is_forcerate > 1)
+		is_forcerate = 1;
 
 	int time = 0;
 	int deltat = 0; //time to fail
@@ -641,6 +617,16 @@ return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vecto
 	double meanweak = 0;
 	for (int i = 0; i < weakenings.size(); i++)
 		meanweak += weakenings[i] / weakenings.size();
+
+	FILE* failure_file; //get the file to write failure time output to, in case the option is specified
+	std::ostringstream oss_failure_file;
+	oss_failure_file << "failure_time_output" << std::scientific << std::setprecision(2) << meanweak << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
+	const char* failure_file_name = oss_failure_file.str().c_str(); //convert to str() then to c_str so we can fprintf to the file.
+
+	if (to_write_failure_times > 0)
+	{
+		fopen_s(&failure_file, failure_file_name, "w"); //open file to write
+	}
 
 	//time points where the weakening is changed
 	//ex) for time_max = 1000 and size of weakenings = 3,
@@ -667,7 +653,7 @@ return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vecto
 			std::cout << "Weakening changed to w = " << weakening << " at time step " << time << "." << std::endl;
 		}
 		//loads all cells by the minimum amount required to the next fail. Time iterates to be when the next slip happens.
-		simulation_done = between_slips(time, time_max, rate, area, modulus, strs.data(), arr_strs.data(), fail_strs.data(), systemstress.data(), strain.data());
+		simulation_done = between_slips(time, time_max, rate, area, modulus, strs.data(), arr_strs.data(), fail_strs.data(), systemstress.data(), strain.data(), is_forcerate);
 		//if the simulation is done, break the loop.
 		if (simulation_done)
 			break;
@@ -677,15 +663,26 @@ return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vecto
 		while ((time < time_max) && will_fail)
 		{
 			//(int& time, double& rate, double& area, double& a, double& b, double& consvarea, double& invconsv, double& weakening,double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain)
-			will_fail = during_slip(time, rate, area, a, b, consvarea, invconsv, weakening, modulus, strs.data(), arr_strs.data(), fail_strs.data(), systemstress.data(), strain.data());
+			will_fail = during_slip(time, rate, area, a, b, consvarea, invconsv, weakening, modulus, strs.data(), arr_strs.data(), fail_strs.data(), systemstress.data(), strain.data(), failed_this_timestep.data());
+			if (to_write_failure_times > 0)
+			{
+				for (int i = 0; i < area; i++)
+				{
+					if (failed_this_timestep[i] == 1)
+					{
+						fprintf(failure_file, "%d %d\n", time, i);
+					}
+				}
+
+			}
 			++time;
 		}
 	}
 
-	if (to_write > 0)
+	if (to_write_stress > 0)
 	{
 		std::ostringstream oss;
-		oss << "scms_avg_eps_" << std::scientific << std::setprecision(2) << weakening << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
+		oss << "scms_avg_eps_" << std::scientific << std::setprecision(2) << meanweak << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
 		std::string name = oss.str();
 		helpers::write_txt(name, systemstress);
 	}
@@ -696,7 +693,7 @@ return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vecto
 
 PYBIND11_MODULE(simlib, m) {
     m.doc() = R"pbdoc(
-        Mean-field simulation backend, written in C by Alan Long. Ported to C++ and Python backend by Jordan Sickle.
+        Mean-field simulation backend. Original C version by Alan Long 2019-2022. Ported to C++ with QoL updates and Python backend by Jordan Sickle 2022-2024.
         -----------------------
         .. currentmodule:: sim
         .. autosummary::
@@ -705,8 +702,7 @@ PYBIND11_MODULE(simlib, m) {
     )pbdoc";
 
     //m.def("plfit", &plfit, "foo");
-    m.def("simcpp", &simcpp, "C Simulation, but with Xoshiro.");
-	m.def("simcpp_forcerate", &simcpp_forcerate, "C Simulation, but with Xoshiro and force rate controlled.");
-	m.def("sim", &sim, "Tested valid C Simulation (adiabatic tested working), with fixed ranmarin seed.");
-	m.def("simcpp_multiple_weakenings", &simcpp_multiple_weakenings, "Same as simcpp, but allows for variable weakenings.");
+    m.def("cpp_sim", &cpp_sim, "C++ Simulation written by Jordan Sickle.");
+	m.def("c_sim", &c_sim, "C Simulation written by Alan Long. Included for testing purposes.");
+	m.def("simcpp_multiple_weakenings", &simcpp_multiple_weakenings, "C++ simulation, but allows for weakening to change over the course of the simulation.");
 }

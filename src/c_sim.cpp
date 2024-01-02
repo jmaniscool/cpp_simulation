@@ -137,38 +137,23 @@ bool during_slip(int& time, double& rate, double& area, double& a, double& b, do
 	}
 
 	//redistribute all stress back into the system
-	//todo: add in rate here so the stress increases by the system loading rate.
 	for (int i = 0; i < area; i++)
 	{
 		//adiabatic (works with tau = 3/2 found)
 		//strs[i] += (consvarea)*fail_amount;
-		strs[i]+= (consvarea)*fail_amount + (invconsv - 1.0) * rate; //alan version
+		strs[i]+= (consvarea)*fail_amount + (invconsv - 1.0) * rate; //alan version, for adiabatic set to rate = 0.
 
-		/*
-		if (rate > 0.0) {
-			strs[i] += (consvarea)*fail_amount + modulus * rate;
-		}
-		else {
-			strs[i] += (consvarea)*fail_amount;
-		}
-		*/
 	}
 
 	//update system variables
-	if (rate > 0.0) {
-		strain[time] = strain[time - 1] + strainsum + rate;
-	}
-	else {
-		strain[time] = strain[time - 1] + strainsum + rate;
-	}
-
+	strain[time] = strain[time - 1] + strainsum + rate;
 	systemstress[time] = tsum;
 
 	return will_fail;
 }
 
 //For most cases, set modulus = 1e-3.
-return_tuple simcpp(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times)
+return_tuple cpp_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times)
 {
 	double b = 1 / tgamma(1 + 1 / a);
 	vec<double> strs(area, -1);

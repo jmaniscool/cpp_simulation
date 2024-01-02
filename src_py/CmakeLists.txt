@@ -1,9 +1,9 @@
-cmake_minimum_required(VERSION 3.4...3.18)
+cmake_minimum_required(VERSION 3.18...3.20)
 project(simlib)
 
 #set environmental variables for pybind
-set(Python_EXECUTABLE "C:/Users/sickl/anaconda3/python.exe")
-set(Python_INCLUDE_DIR "C:/Users/sickl/anaconda3/include")
+set(Python_EXECUTABLE "C:/Users/sickl/mambaforge/python.exe") #point this to your python_executable. For Anaconda, should be at C:/Users/user_name/anaconda3/python.exe
+set(Python_INCLUDE_DIR "C:/Users/sickl/mambaforge/include") #Point this to your python includes. For Anaconda, should be at C:/Users/user_name/anaconda3/include
 set(PYBIND11_PYTHON_VERSION 3.11)
 set(CMAKE_CONFIGURATION_TYPES Release)
 set(CMAKE_CXX_STANDARD 20) #set the cmake c++ version to C++20
@@ -18,5 +18,5 @@ add_library(mylibs STATIC customs.h helpers.hpp Xoshiro.hpp progressbar.hpp)
 set_target_properties(mylibs PROPERTIES LINKER_LANGUAGE Cxx)
 
 #add c_sim to a shared pybind11 module
-pybind11_add_module(${PROJECT_NAME} SHARED c_sim.cpp)
+pybind11_add_module(${PROJECT_NAME} SHARED c_sim_py.cpp)
 target_link_libraries(mylibs ${PROJECT_NAME})
