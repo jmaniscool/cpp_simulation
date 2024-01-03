@@ -40,18 +40,6 @@ simstrain is the strain on the system and also consists of comma spaced doubles.
 
 //custom types
 typedef std::tuple<vec<double>,vec<double>,vec<double>> return_tuple; //return tuple has [force,time,strs]
-double wbl(double k, double lambda);
-
-//////helpers for simulation so I can avoid copying
-//Function to handle during a slip. Returns True if failure continues, otherwise returns false.
-bool during_slip(int& time, double& rate, double& area, double& a, double& b, double& consvarea, double& invconsv, double& weakening, double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain, double* failed_this_timestep);
-//set up the cpp simulation. Useful because multiple types of simulations can be run, keeps changes between each modular.
-void sim_setup(double area, double w, vec<double>& strs, vec<double>& systemstress, vec<double>& arr_strs, vec<double>& fail_strs);
-//this function takes care of stuff between slips. Gradually loads all cells at rate defined in main simulation.
-// If time + deltat >= time_max, return true and break out of the while loop. Else return false
-bool between_slips(int& time, double& time_max, double& rate, double& area, double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain);
-
-return_tuple cpp_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times);
 
 double wbl(double k, double lambda)
 {
