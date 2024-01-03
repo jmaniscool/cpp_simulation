@@ -601,6 +601,17 @@ return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vecto
 	if (is_forcerate > 1)
 		is_forcerate = 1;
 
+	//if weakenings is empty, set it to default values.
+	if (weakenings.empty())
+	{
+		std::vector<double> tmp{ 0,0.005,0.007,0.1 };
+		std::cout << "Using default values of weakening = [";
+		for (int i = 0; i < tmp.size(); i++)
+			std::cout << tmp[i] << ", ";
+		std::cout << "]. " << std::endl;
+		weakenings = tmp;
+	}
+
 	int time = 0;
 	int deltat = 0; //time to fail
 	double x = -1; //holds amount of stress failed on the current cell
@@ -701,8 +712,8 @@ PYBIND11_MODULE(simlib, m) {
            sim_debug
     )pbdoc";
 
-    //m.def("plfit", &plfit, "foo");
-    m.def("cpp_sim", &cpp_sim, "C++ Simulation written by Jordan Sickle.");
-	m.def("c_sim", &c_sim, "C Simulation written by Alan Long. Included for testing purposes.");
-	m.def("simcpp_multiple_weakenings", &simcpp_multiple_weakenings, "C++ simulation, but allows for weakening to change over the course of the simulation.");
+	m.def("cpp_sim", &cpp_sim, "C++ Simulation written by Jordan Sickle.", py::arg("area") = 1e4, py::arg("time_max") = 1e5, py::arg("weakening") = 0, py::arg("consv") = 0.99, py::arg("rate") = 0, py::arg("w") = 0.05, py::arg("a") = 18, py::arg("modulus") = 1e-4, py::arg("to_write_stress") = 0, py::arg("to_write_failure_times") = 0, py::arg("is_forcerate") = 0);
+
+	m.def("c_sim", &c_sim, "C Simulation written by Alan Long. Included for testing purposes.", py::arg("area") = 1e4, py::arg("time_max") = 1e5, py::arg("weakening") = 0, py::arg("consv") = 0.99, py::arg("rate") = 0, py::arg("w") = 0.05, py::arg("a") = 18, py::arg("modulus") = 1e-4, py::arg("to_write") = 0);
+	m.def("simcpp_multiple_weakenings", &simcpp_multiple_weakenings, "C++ simulation, but allows for weakening to change over the course of the simulation.", py::arg("area") = 1e4, py::arg("time_max") = 1e5, py::arg("weakenings") = std::vector<double>(), py::arg("consv") = 0.99, py::arg("rate") = 0, py::arg("w") = 0.05, py::arg("a") = 18, py::arg("modulus") = 1e-4, py::arg("to_write_stress") = 0, py::arg("to_write_failure_times") = 0, py::arg("is_forcerate") = 0);
 }
