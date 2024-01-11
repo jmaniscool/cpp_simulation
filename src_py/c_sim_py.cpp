@@ -20,6 +20,7 @@ simstrain is the strain on the system and also consists of comma spaced doubles.
 #include <math.h>
 #include <time.h>
 #include <stdlib.h>
+#include <omp.h> //for parallel
 
 //C++ includes
 #include <vector>
@@ -252,18 +253,25 @@ bool during_slip(int& time, double& rate, double& area, double& a, double& b, do
 	double strainsum = 0; //sum up the strain additions, assuming that each slipping cell contributes 1/N^2 additional strain
 	double invareasq = 1 / (area*area);
 
-	for (int i = 0; i < area; i++)
+	int myfail = 0; //set myfail to 0, and if it's ever greater than 1, then set will_fail to true.
+
+	//automatically parallelize if the area is greater than 2,000,000. Speedup is minimal but necessary for extremely large simulations
+	#pragma omp parallel for reduction(+:tsum, strainsum, fail_amount, myfail) if (area > 2e6)
 	{
-		tsum += strs[i];
-		if (strs[i] >= fail_strs[i])
+		for (int i = 0; i < area; i++)
 		{
-			strainsum += invareasq; //strain += 1/N^2 per failed cell
-			will_fail = true;
-			x = (fail_strs[i] - arr_strs[i]) * wbl(a, b); //wbl(a,b) > 1 some large fraction of the time
-			fail_amount += x;
-			strs[i] -= oneplusconsvarea * x;
-			if (fail_strs[i] == 1)
-				fail_strs[i] = 1 - weakening * (1 - arr_strs[i]);
+			tsum += strs[i];
+			if (strs[i] >= fail_strs[i])
+			{
+				strainsum += invareasq; //strain += 1/N^2 per failed cell
+				//will_fail = true;
+				myfail++;
+				x = (fail_strs[i] - arr_strs[i]) * wbl(a, b); //wbl(a,b) > 1 some large fraction of the time
+				fail_amount += x;
+				strs[i] -= oneplusconsvarea * x;
+				if (fail_strs[i] == 1)
+					fail_strs[i] = 1 - weakening * (1 - arr_strs[i]);
+			}
 		}
 	}
 
@@ -279,7 +287,7 @@ bool during_slip(int& time, double& rate, double& area, double& a, double& b, do
 	strain[time] = strain[time - 1] + strainsum + rate;
 	systemstress[time] = tsum;
 
-	return will_fail;
+	return myfail > 0;
 }
 
 //For most cases, set modulus = 1e-3.
