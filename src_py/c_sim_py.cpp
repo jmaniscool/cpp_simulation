@@ -20,6 +20,7 @@ simstrain is the strain on the system and also consists of comma spaced doubles.
 #include <math.h>
 #include <time.h>
 #include <stdlib.h>
+#include <string.h>
 #include <omp.h> //for parallel
 
 //C++ includes
@@ -31,11 +32,11 @@ simstrain is the strain on the system and also consists of comma spaced doubles.
 #include <pybind11/stl.h> //for std::vector imports
 #include <pybind11/numpy.h> //so we can export vectors
 
+
 //local includes
 #include "customs.h"
 #include "Xoshiro.hpp"
 #include "helpers.hpp"
-#include "progressbar.hpp"
 
 namespace py = pybind11;
 
@@ -50,19 +51,10 @@ double wbl(double k, double lambda);
 //////helpers for simulation so I can avoid copying
 
 //Function to handle during a slip. Returns True if failure continues, otherwise returns false.
-bool during_slip(int& time, double& rate, double& area, double& a, double& b, double& consvarea, double& invconsv, double& weakening, double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain, double* failed_this_timestep);
+//bool during_slip(int& time, double& rate, double& area, double& a, double& b, double& consvarea, double& invconsv, double& weakening, double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain, double* failed_this_timestep);
 
-//set up the cpp simulation. Useful because multiple types of simulations can be run, keeps changes between each modular.
-void sim_setup(double area, double w, vec<double>& strs, vec<double>& systemstress, vec<double>& arr_strs, vec<double>& fail_strs);
-//this function takes care of stuff between slips. Gradually loads all cells at rate defined in main simulation.
-// If time + deltat >= time_max, return true and break out of the while loop. Else return false
-//todo: implement adiabatic (rate = 0) properly.
-bool between_slips(int& time, double& time_max, double& rate, double& area, double& modulus, double* strs, double* arr_strs, double* fail_strs, double* systemstress, double* strain, int is_forcerate);
 
-return_tuple c_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write);
-return_tuple cpp_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times, int is_forcerate);
 
-double wbl(int ind, double** us, double* cs, int* i97s, int* j97s, double cm, double cd, double k, double lambda);
 double wbl(int ind, double** us, double* cs, int* i97s, int* j97s, double cm, double cd, double k, double lambda)
 {
 	double uni;
@@ -177,6 +169,7 @@ double *ranwbl(int ijkl, int N, double k, double lambda)
 
 }
 
+//make a Weibully-distributed random number using rand_num.
 double wbl(double k, double lambda)
 {
 	double rand = helpers::ran_num<double>(0, 1);
@@ -214,16 +207,32 @@ void get_u(double* u, int ijkl) {
 }
 
 //use w = 0.1 to give a source of quenched disorder. Vary k to get different levels of system disorder.
-void sim_setup(double area, double w, vec<double>& strs, vec<double>& systemstress, vec<double>& arr_strs, vec<double>& fail_strs)
-{
+//if an initial state is given, pull random stress values from it as an initial state.
+void sim_setup(double area, double w, vec<double>& strs, vec<double>& systemstress, vec<double>& arr_strs, vec<double>& fail_strs, const char* initial_state_filename) {
+	//if initial_state_filename is null, then use Alan's initial state. 
 	vec<double> randm = helpers::ran_vec<double>(0, 1, static_cast<int>(area));
-	for (int i = 0; i < strs.size(); i++) {
+	vec<int>idxs = {};
+	vec<double> stress_pool = {};
+	int is_exists = helpers::file_exists(initial_state_filename); //check if file exists. If it does, then read it in.
+	if (is_exists > 0) {
+		stress_pool = helpers::read_simulation_state(initial_state_filename);
+		idxs = helpers::ran_vec<int>(0, stress_pool.size(), static_cast<int>(area));
+	}
+
+	for (int i = 0; i < area; i++) {
 		arr_strs[i] = w * randm[i] - w / 2;//define arrest stresses randomly
 		fail_strs[i] = 1;
-		strs[i] = (std::pow(i / area, .4) * 1.56585 - .56585) * (fail_strs[i] - arr_strs[i]) + arr_strs[i];//this distribution is an approximation of the steady state distribution. It will take some time to get to the steady state. This can be improved
+		if (is_exists > 0) {
+			strs[i] = stress_pool[idxs[i]]; //get the stresses from the input file.
+		}
+		else {
+			strs[i] = (std::pow(i / area, .4) * 1.56585 - .56585) * (fail_strs[i] - arr_strs[i]) + arr_strs[i];//this distribution is an approximation of the steady state distribution. It will take some time to get to the steady state. This can be improved
+		}
+
 		systemstress[0] += strs[i]; //initial system stress is sum of all strs
 	}
 	return;
+		
 }
 
 
@@ -313,7 +322,7 @@ bool during_slip(int& time, double& rate, double& area, double& a, double& b, do
 
 //For most cases, set modulus = 1e-3.
 //when force rate controlled, set strain = 0 outside of an avalanche, then strain += 1/N^2 inside of an avalanche
-return_tuple cpp_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times, int is_forcerate)
+return_tuple cpp_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times, int is_forcerate, const char* initial_state_filename)
 {
 	double b = 1 / tgamma(1 + 1 / a);
 	vec<double> strs(area, -1);
@@ -352,7 +361,7 @@ return_tuple cpp_sim(double area, double time_max, double weakening, double cons
 	bool simulation_done = false; //simulation is not done until this flag is pinged.
 
 	//set up the simulation
-	sim_setup(area, w, strs, systemstress, arr_strs, fail_strs);
+	sim_setup(area, w, strs, systemstress, arr_strs, fail_strs, initial_state_filename);
 	time = 1;
 
 	//main loop
@@ -585,7 +594,7 @@ return_tuple c_sim(double area, double time_max, double weakening, double consv,
 // Input here now also includes a list of weakenings. The weakenings will, by default, change at even intervals. 
 // That is, if there are 4 weakenings, there will be a change at 25%, 50%, and 75%.
 //
-return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vector<double> weakenings, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times, int is_forcerate)
+return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vector<double> weakenings, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times, int is_forcerate, const char* initial_state_filename)
 {
 
 	double b = 1 / tgamma(1 + 1 / a);
@@ -659,7 +668,7 @@ return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vecto
 	std::cout << "Iniital weakening w = " << weakening << "." << std::endl;
 
 	//set up the simulation
-	sim_setup(area, w, strs, systemstress, arr_strs, fail_strs);
+	sim_setup(area, w, strs, systemstress, arr_strs, fail_strs, initial_state_filename);
 	time = 1;
 
 	//main loop
@@ -720,8 +729,8 @@ PYBIND11_MODULE(simlib, m) {
            sim_debug
     )pbdoc";
 
-	m.def("cpp_sim", &cpp_sim, "C++ Simulation written by Jordan Sickle.", py::arg("area") = 1e4, py::arg("time_max") = 1e5, py::arg("weakening") = 0, py::arg("consv") = 0.99, py::arg("rate") = 0, py::arg("w") = 0.05, py::arg("a") = 18, py::arg("modulus") = 1e-4, py::arg("to_write_stress") = 0, py::arg("to_write_failure_times") = 0, py::arg("is_forcerate") = 0);
+	m.def("cpp_sim", &cpp_sim, "C++ Simulation written by Jordan Sickle.", py::arg("area") = 1e4, py::arg("time_max") = 1e5, py::arg("weakening") = 0, py::arg("consv") = 0.99, py::arg("rate") = 0, py::arg("w") = 0.1, py::arg("a") = 18, py::arg("modulus") = 1e-4, py::arg("to_write_stress") = 0, py::arg("to_write_failure_times") = 0, py::arg("is_forcerate") = 0, py::arg("initial_state_filename") = "null");
 
 	m.def("c_sim", &c_sim, "C Simulation written by Alan Long. Included for testing purposes.", py::arg("area") = 1e4, py::arg("time_max") = 1e5, py::arg("weakening") = 0, py::arg("consv") = 0.99, py::arg("rate") = 0, py::arg("w") = 0.05, py::arg("a") = 18, py::arg("modulus") = 1e-4, py::arg("to_write") = 0);
-	m.def("simcpp_multiple_weakenings", &simcpp_multiple_weakenings, "C++ simulation, but allows for weakening to change over the course of the simulation.", py::arg("area") = 1e4, py::arg("time_max") = 1e5, py::arg("weakenings") = std::vector<double>(), py::arg("consv") = 0.99, py::arg("rate") = 0, py::arg("w") = 0.05, py::arg("a") = 18, py::arg("modulus") = 1e-4, py::arg("to_write_stress") = 0, py::arg("to_write_failure_times") = 0, py::arg("is_forcerate") = 0);
+	m.def("simcpp_multiple_weakenings", &simcpp_multiple_weakenings, "C++ simulation, but allows for weakening to change over the course of the simulation.", py::arg("area") = 1e4, py::arg("time_max") = 1e5, py::arg("weakenings") = std::vector<double>(), py::arg("consv") = 0.99, py::arg("rate") = 0, py::arg("w") = 0.05, py::arg("a") = 18, py::arg("modulus") = 1e-4, py::arg("to_write_stress") = 0, py::arg("to_write_failure_times") = 0, py::arg("is_forcerate") = 0, py::arg("initial_state_filename") = "null");
 }
