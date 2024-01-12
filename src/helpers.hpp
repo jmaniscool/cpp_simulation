@@ -11,35 +11,54 @@
 #include <numeric> //std::iota std::accumulate std::reduce
 #include <algorithm> //std::sort, std::stable_sort
 //#include "gsl/gsl_interp.h" //required for log vector functions, commented out for simulation helper implementation
+#include <boost/interprocess/file_mapping.hpp> //for file mapping (speed up loading and saving)
+#include <boost/interprocess/mapped_region.hpp> //for mapped region object
 
 //define helpers namespace for helper functions (i.e. generating random vectors)
 
 namespace helpers
 {
 
-	template<class T>
-	static vec<T> ran_vec(double st, double en, int len);
+	//use this to determine if a file exists
+	static int file_exists(const char* filename)
+	{
+		FILE* fp;
+		fopen_s(&fp, filename, "r");
+		int is_exist = 0;
+		if (fp != NULL)
+		{
+			is_exist = 1;
+			fclose(fp); // close the file
+		}
+		return is_exist;
+	}
 
-	template<class T>
-	static T ran_num(double st, double en);
+	//read in the simulation state, assumed to be in format from write_txt. Uses memory mapping to make reads more efficient.
+	static vec<double> read_simulation_state(const char* fname)
+	{
+		boost::interprocess::file_mapping fileMapping(fname, boost::interprocess::read_only); //open file in memory map for read only
 
-	//return log of vector input.
-	static vec<double> logvec(vec<double> x);
+		boost::interprocess::mapped_region mappedRegion(fileMapping, boost::interprocess::read_only); //allocate file to mapped region
 
-	//return the lof10 of a vector input.
-	static vec<double> log10vec(vec<double>& x);
+		std::string charData = static_cast<std::string>(static_cast<char*>(mappedRegion.get_address())); //convert the mappedRegion to a string
 
-	//linear fit of variables x and y.
-	static double linfit(vec<double>& x, vec<double>& y);
+		std::istringstream stream(charData); //turn into a stringstream and treat it as in memory
 
-	//linear interpolation between vectors x and y. Commented out so GSL dependence can be removed from simulation code.
-	//static double interp(vec<double>& x, vec<double>& y, double interp_point);
+		int count = std::count(charData.begin(), charData.end(), '\n'); //count the number of newline characters
+		vec<double> out(count, -1); //initialize vector to hold that much data
 
-	//linear interpolation on log-log between x and y.
-	static double logloginterp(vec<double>& x, vec<double>& y, double interp_point);
+		std::string hold_line;
+		int i = 0;
+		while (std::getline(stream, hold_line))
+		{
+			double val = std::stof(hold_line);
+			out[i] = val;
+			i++;
+		}
 
 
-	static std::tuple<vec<double>, vec<double>> logbinning(vec<double>& x, vec<double>& y);
+		return out;
+	}
 
 
 	//do the np.linspace. From https://stackoverflow.com/questions/27028226/python-linspace-in-c
@@ -47,8 +66,8 @@ namespace helpers
 	static std::vector<double> linspace(T start_in, T end_in, int num_in);
 
 	//write to a file fname.
-	template<class T>
-	static void write_txt(std::string& fname, std::vector<T>& indat);
+	//template<class T>
+	//static void write_txt(std::string& fname, std::vector<T>& indat);
 
 
 	//get a random vector of type class T. Initial testing suggests this is about 10x faster than ranmarin() and may be statistically valid enough for our applications
@@ -62,7 +81,7 @@ namespace helpers
 		double range = en - st;
 
 		for (int i = 0; i < len; i++)
-			out[i] = (T)(range * XoshiroCpp::DoubleFromBits(rng()) + st);
+			out[i] = static_cast<T>(range * XoshiroCpp::DoubleFromBits(rng()) + st);
 
 		return out;
 	}
@@ -74,7 +93,7 @@ namespace helpers
 		unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
 		XoshiroCpp::Xoshiro256PlusPlus rng(seed);
 		double range = en - st;
-		return (T)(range * XoshiroCpp::DoubleFromBits(rng()) + st);
+		return static_cast<T>(range * XoshiroCpp::DoubleFromBits(rng()) + st);
 	}
 
 
@@ -164,8 +183,8 @@ namespace helpers
 
 	//perform an argsort, which returns the indices that would sort vector x.
 	// implemented from https://stackoverflow.com/questions/1577475/c-sorting-and-keeping-track-of-indexes
-	template <typename T>
-	static vec<size_t> argsort(vec<T>& x);
+	//template <typename T>
+	//static vec<size_t> argsort(vec<T>& x);
 
 	template <typename T>
 	static vec<size_t> argsort(vec<T>& x)
@@ -186,8 +205,8 @@ namespace helpers
 
 	//get the closest number to a given index
 	//from https://stackoverflow.com/questions/8647635/elegant-way-to-find-closest-value-in-a-vector-from-above
-	template <typename T>
-	static int closest(const std::vector<T>& vec, T value);
+	//template <typename T>
+	//static int closest(const std::vector<T>& vec, T value);
 
 	template <typename T>
 	static int closest(const std::vector<T>& vec, T value) {
@@ -313,7 +332,7 @@ namespace helpers
 	//
 
 	//get the confidence intervals
-	static vec<double> confidence_intervals(vec<double>& boot, double ci);
+	//static vec<double> confidence_intervals(vec<double>& boot, double ci);
 
 	static vec<double> confidence_intervals(vec<double>& boot, double ci)
 	{
@@ -334,7 +353,7 @@ namespace helpers
 	}
 
 	//get 1 sigma and 2 sigma CIs more quickly
-	static vec<double> get_cis(vec<double>& boot);
+	//static vec<double> get_cis(vec<double>& boot);
 
 
 	//
@@ -359,9 +378,11 @@ namespace helpers
 	}
 
 
-	static vec<double> read_csv(const char* fname);
+	//static vec<double> read_csv(const char* fname);
 
-	static vec<double> read_csv(const char* fname)
+
+	//function for reading from pandas DataFrame in C++.
+	static vec<double> read_pandas(const char* fname)
 	{
 		std::ifstream reader(fname);
 		std::string line; //holds the whole line until \n is reached.

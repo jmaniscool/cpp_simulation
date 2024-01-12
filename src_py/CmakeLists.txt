@@ -12,6 +12,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 #ensure python is installed using vcpkg on Windows and via apt on Linux.
 find_package(Python 3.11 COMPONENTS Interpreter Development REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
+find_package(Boost REQUIRED COMPONENTS filesystem system) #for Boost
+include_directories(${Boost_INCLUDE_DIRS})
 
 #add helpers to a library
 add_library(mylibs STATIC customs.h helpers.hpp Xoshiro.hpp progressbar.hpp)

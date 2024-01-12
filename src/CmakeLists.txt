@@ -11,10 +11,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 #find_package(Python 3.11 COMPONENTS Interpreter Development REQUIRED)
 #find_package(pybind11 CONFIG REQUIRED)
+find_package(Boost REQUIRED COMPONENTS filesystem system) #for Boost
+include_directories(${Boost_INCLUDE_DIRS})
 
 add_library(mylibs STATIC customs.h helpers.hpp Xoshiro.hpp)
 set_target_properties(mylibs PROPERTIES LINKER_LANGUAGE Cxx)
 
 #pybind11_add_module(${PROJECT_NAME} SHARED c_sim.cpp)
+target_link_libraries(mylibs  ${Boost_LIBRARIES})
 target_link_libraries(mylibs ${PROJECT_NAME})
 add_executable(${PROJECT_NAME} c_sim.cpp)
