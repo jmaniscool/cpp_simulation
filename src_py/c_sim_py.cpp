@@ -41,7 +41,8 @@ simstrain is the strain on the system and also consists of comma spaced doubles.
 namespace py = pybind11;
 
 //custom types
-typedef std::tuple<vec<double>,vec<double>,vec<double>> return_tuple; //return tuple has [force,time,strs]
+typedef std::tuple<vec<double>,vec<double>,vec<double>, vec<double>> return_4tuple; //return tuple has [time, force,time,strs]
+typedef std::tuple<vec<double>, vec<double>, vec<double>> return_3tuple; //return tuple has [force,time,strs]
 //double *ranmarin(int ijkl, int N);
 //double *ranwbl(int ijkl, int N, double k, double lambda);
 double wbl(double k, double lambda);
@@ -249,8 +250,11 @@ bool between_slips(int& time, double& time_max, double& rate, double& area, doub
 			next_fail = fail_strs[i] - strs[i];//chose minimum stress to next failure
 	}
 	if (rate > 0.0) {
-		int deltat = static_cast<int> (next_fail / (rate * (1-is_forcerate)*modulus)); //if forcerate, then modulus is not factored in.
+		int deltat = static_cast<int> (next_fail / (rate * is_forcerate + (1-is_forcerate)*modulus*rate)); //if forcerate, then modulus is not factored in.
 		if (deltat > 0) {
+
+			//include if filling in time between avalanches.
+			/*
 			for (int i = 0; i < deltat; i++) {
 				if (time == time_max) {
 					return true; //flag raised that simulation is done
@@ -259,6 +263,7 @@ bool between_slips(int& time, double& time_max, double& rate, double& area, doub
 				strain[time] = strain[time - 1] + is_forcerate*rate; //strain only increments during avalanche during a force rate controlled avalanche.
 				time++;
 			}
+			*/
 		}
 	}
 	else {
@@ -294,7 +299,6 @@ bool during_slip(int& time, double& rate, double& area, double& a, double& b, do
 			if (strs[i] >= fail_strs[i])
 			{
 				strainsum += invareasq; //strain += 1/N^2 per failed cell
-				//will_fail = true;
 				myfail++;
 				x = (fail_strs[i] - arr_strs[i]) * wbl(a, b); //wbl(a,b) > 1 some large fraction of the time
 				fail_amount += x;
@@ -322,24 +326,25 @@ bool during_slip(int& time, double& rate, double& area, double& a, double& b, do
 
 //For most cases, set modulus = 1e-3.
 //when force rate controlled, set strain = 0 outside of an avalanche, then strain += 1/N^2 inside of an avalanche
-return_tuple cpp_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times, int is_forcerate, const char* initial_state_filename)
+return_4tuple cpp_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times, int is_forcerate, const char* initial_state_filename)
 {
 	double b = 1 / tgamma(1 + 1 / a);
 	vec<double> strs(area, -1);
 	vec<double> systemstress(time_max, 0); //initialize all systemstress to be 0.
+	vec<double> systemtime(time_max, 0); //initialize system time vector
 	vec<double> strain(time_max, 0);
 	vec<double> arr_strs(area, -1);
 	vec<double> fail_strs(area, -1);
 	vec<double> failed_this_timestep(area, 0); //'failed this timestep' will have 1 on all indices that have failed during the given timestep
 
-	FILE* failure_file; //get the file to write failure time output to, in case the option is specified
+	FILE* failure_file = NULL; //get the file to write failure time output to, in case the option is specified
 	std::ostringstream oss_failure_file;
 	oss_failure_file << "failure_time_output" << std::scientific << std::setprecision(2) << weakening << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
-	const char* failure_file_name = oss_failure_file.str().c_str(); //convert to str() then to c_str so we can fprintf to the file.
+	std::string failure_file_name = oss_failure_file.str(); //convert to str() then to c_str so we can fprintf to the file.
 
 	if (to_write_failure_times > 0)
 	{
-		fopen_s(&failure_file, failure_file_name, "w"); //open file to write
+		fopen_s(&failure_file, failure_file_name.c_str(), "w"); //open file to write
 	}
 
 	//calculate once to save time.
@@ -394,12 +399,24 @@ return_tuple cpp_sim(double area, double time_max, double weakening, double cons
 		}
 	}
 
+	//fill in the system time
+	systemtime = helpers::make_simtime(systemstress, rate * (1 - is_forcerate) * modulus);
+
+
 	if (to_write_stress > 0)
 	{
-		std::ostringstream oss;
-		oss << "scms_avg_eps_" << std::scientific << std::setprecision(2) << weakening << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
-		std::string name = oss.str();
-		helpers::write_txt(name, systemstress);
+		//first, write the stress.
+		std::ostringstream oss_stress;
+		oss_stress << "simstress_avg_eps_" << std::scientific << std::setprecision(2) << weakening << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
+		std::string namestress = oss_stress.str();
+		helpers::write_txt(namestress, systemstress);
+
+		//then, write the corresponding time vector.
+		std::ostringstream oss_time;
+		oss_time << "simtime_avg_eps_" << std::scientific << std::setprecision(2) << weakening << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
+		std::string nametime = oss_time.str();
+		helpers::write_txt(nametime, systemtime);
+
 	}
 
 	if (to_write_failure_times > 0)
@@ -407,13 +424,13 @@ return_tuple cpp_sim(double area, double time_max, double weakening, double cons
 		fclose(failure_file);
 	}
 
-	return_tuple out = std::make_tuple(systemstress, strain, strs); //stress is vector of stresses at the end of the simulation. force is the total amount of stress in the system. strain is proportional to the amount of time
+	return_4tuple out = std::make_tuple(systemtime, systemstress, strain, strs); //stress is vector of stresses at the end of the simulation. force is the total amount of stress in the system. strain is proportional to the amount of time
 	return out;
 }
 
 
 //Alan's pure C simulation.
-return_tuple c_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write) {
+return_3tuple c_sim(double area, double time_max, double weakening, double consv, double rate, double w, double a, double modulus, int to_write) {
     //define loop variables outside of pragma omp
     int idxa;
     int idxweak;
@@ -585,7 +602,7 @@ return_tuple c_sim(double area, double time_max, double weakening, double consv,
     free(i97s);
     free(j97s);
     
-    return_tuple out = std::make_tuple(force, strain, strs);
+    return_3tuple out = std::make_tuple(force, strain, strs);
     return out;
 }
 
@@ -594,12 +611,13 @@ return_tuple c_sim(double area, double time_max, double weakening, double consv,
 // Input here now also includes a list of weakenings. The weakenings will, by default, change at even intervals. 
 // That is, if there are 4 weakenings, there will be a change at 25%, 50%, and 75%.
 //
-return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vector<double> weakenings, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times, int is_forcerate, const char* initial_state_filename)
+return_4tuple simcpp_multiple_weakenings(double area, double time_max, std::vector<double> weakenings, double consv, double rate, double w, double a, double modulus, int to_write_stress, int to_write_failure_times, int is_forcerate, const char* initial_state_filename)
 {
 
 	double b = 1 / tgamma(1 + 1 / a);
 	vec<double> strs(area, -1);
 	vec<double> systemstress(time_max, 0); //initialize all systemstress to be 0.
+	vec<double> systemtime(time_max, 0);
 	vec<double> strain(time_max, 0);
 	vec<double> arr_strs(area, -1);
 	vec<double> fail_strs(area, -1);
@@ -646,14 +664,14 @@ return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vecto
 	for (int i = 0; i < weakenings.size(); i++)
 		meanweak += weakenings[i] / weakenings.size();
 
-	FILE* failure_file; //get the file to write failure time output to, in case the option is specified
+	FILE* failure_file = NULL; //get the file to write failure time output to, in case the option is specified
 	std::ostringstream oss_failure_file;
 	oss_failure_file << "failure_time_output" << std::scientific << std::setprecision(2) << meanweak << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
-	const char* failure_file_name = oss_failure_file.str().c_str(); //convert to str() then to c_str so we can fprintf to the file.
+	std::string failure_file_name = oss_failure_file.str(); //convert to str() then to c_str so we can fprintf to the file.
 
 	if (to_write_failure_times > 0)
 	{
-		fopen_s(&failure_file, failure_file_name, "w"); //open file to write
+		fopen_s(&failure_file, failure_file_name.c_str(), "w"); //open file to write
 	}
 
 	//time points where the weakening is changed
@@ -707,15 +725,27 @@ return_tuple simcpp_multiple_weakenings(double area, double time_max, std::vecto
 		}
 	}
 
+	//fill in the system time
+	systemtime = helpers::make_simtime(systemstress, rate * (1 - is_forcerate) * modulus);
+
+
 	if (to_write_stress > 0)
 	{
-		std::ostringstream oss;
-		oss << "scms_avg_eps_" << std::scientific << std::setprecision(2) << meanweak << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
-		std::string name = oss.str();
-		helpers::write_txt(name, systemstress);
+		//first, write the stress.
+		std::ostringstream oss_stress;
+		oss_stress << "simstress_avg_eps_" << std::scientific << std::setprecision(2) << weakening << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
+		std::string namestress = oss_stress.str();
+		helpers::write_txt(namestress, systemstress);
+
+		//then, write the corresponding time vector.
+		std::ostringstream oss_time;
+		oss_time << "simtime_avg_eps_" << std::scientific << std::setprecision(2) << weakening << "_k_" << std::setprecision(1) << std::scientific << a << ".txt";
+		std::string nametime = oss_time.str();
+		helpers::write_txt(nametime, systemtime);
+
 	}
 
-	return_tuple out = std::make_tuple(systemstress, strain, strs); //stress is vector of stresses at the end of the simulation. force is the total amount of stress in the system. strain is proportional to the amount of time
+	return_4tuple out = std::make_tuple(systemtime,systemstress, strain, strs); //stress is vector of stresses at the end of the simulation. force is the total amount of stress in the system. strain is proportional to the amount of time
 	return out;
 }
 
