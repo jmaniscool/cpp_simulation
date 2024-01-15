@@ -3,4 +3,4 @@
 
 
 #  TODO
-Add in a default parameter for initial state. I.e. two N long vectors of doubles of stress tau_i and tau_i,a.
+Write comprehensive guide for installing and using C and Python versions of the simulation.
