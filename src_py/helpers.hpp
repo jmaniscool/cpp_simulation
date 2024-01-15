@@ -107,6 +107,9 @@ namespace helpers
 		int st = 0;
 		int en = 0;
 		double dtau = 0;
+		if (rate <= 0)
+			return out;
+		//if rate greater than zero, then continue.
 		for (int i = 0; i < changepoints.size(); ++i) {
 			st = changepoints[i];
 			en = len;

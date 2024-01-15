@@ -16,6 +16,7 @@
 
 //define helpers namespace for helper functions (i.e. generating random vectors)
 
+
 namespace helpers
 {
 
@@ -68,6 +69,66 @@ namespace helpers
 	//write to a file fname.
 	//template<class T>
 	//static void write_txt(std::string& fname, std::vector<T>& indat);
+
+	//Python version of fill time code
+	/*
+	* def make_simtime(stress, rate = 1e-4):
+		changepoints = np.where(np.diff(stress) > 0)[0] + 1
+		ts = np.arange(len(stress)).astype(float) #get time points
+		dtime = 0
+		for i in range(len(changepoints)):
+			st = changepoints[i]
+			en = len(stress)
+			if i+1 < len(changepoints):
+				en = changepoints[i+1]
+			dtau = stress[st]- stress[st-1]
+			dtime += dtau/rate
+			ts[st:en] = ts[st:en] + dtime
+    
+		return ts
+	*/
+
+	//fill out a time vector using the system strain rate and modulus
+	static vec<double> make_simtime(vec<double>& stress, double rate)
+	{
+		int len = stress.size();
+		vec<double> out(len, 0);
+
+		//find parts whre stress increases
+		vec<int> changepoints;
+		for (int i = 1; i < stress.size(); ++i) {
+			if (stress[i] > stress[i - 1]) {
+				changepoints.push_back(i);
+			}
+			out[i] = i; //initialize out
+		}
+
+		double dtime = 0.0;
+		int st = 0;
+		int en = 0;
+		double dtau = 0;
+		if (rate <= 0)
+			return out;
+		//if the rate is greater than zero, then continue.
+		for (int i = 0; i < changepoints.size(); ++i) {
+			st = changepoints[i];
+			en = len;
+
+			if (i + 1 < changepoints.size()) {
+				en = changepoints[i + 1];
+			}
+
+			dtau = stress[st] - stress[st - 1];
+			dtime += dtau / rate;
+
+			for (int j = st; j < en; ++j) {
+				out[j] += dtime;
+			}
+		}
+
+		return out;
+
+	}
 
 
 	//get a random vector of type class T. Initial testing suggests this is about 10x faster than ranmarin() and may be statistically valid enough for our applications
